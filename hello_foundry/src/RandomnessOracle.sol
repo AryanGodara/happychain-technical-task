@@ -27,6 +27,13 @@ contract RandomnessOracle {
     // Method to compute randomness for a given timestamp
     function computeRandomness(uint256 timestamp) public view returns (bytes32) {
         bytes32 drandValue = drandOracle.unsafeGetDrandValue(timestamp - DELAY);
+        if (drandValue == 0) {
+            drandValue = drandOracle.unsafeGetDrandValue(timestamp - DELAY - 1);
+        }
+        if (drandValue == 0) {
+            drandValue = drandOracle.unsafeGetDrandValue(timestamp - DELAY - 2);
+        }
+
         bytes32 sequencerValue = sequencerRandomOracle.unsafeGetSequencerValue(timestamp);
 
         if (drandValue == 0 || sequencerValue == 0) {
