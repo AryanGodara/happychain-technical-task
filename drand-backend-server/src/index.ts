@@ -98,11 +98,12 @@ async function sendDrandOracleTransactionWithRetry(timestamp: number, randomness
             return txHash;
         } catch (error: any) {
             if (error.message.includes('Drand value cannot be backfilled after DRAND_TIMEOUT')) {
-                console.error(red(red('\nDrand-API ::: Timestamp:'), timestamp, ' DrandOracle ::: Error :: Transaction failed : DRAND_TIMEOUT , not retrying.\n'));
+                console.error(red('\nDrand-API ::: Timestamp:'), timestamp, red(' DrandOracle ::: Error :: Transaction failed : DRAND_TIMEOUT , not retrying.\n'));
                 break;
             } else {
                 console.log(red('\nDrand-API::: Timestamp:'), timestamp, red(' DrandOracle ::: Transaction failed (attempt '), attempt, "), retrying...\n");
-                if (attempt === retries) throw error;
+                if (attempt === retries) return null
+                    // throw error;
             }
         }
     }
@@ -154,11 +155,12 @@ async function sendSequencerTransactionWithRetry(timestamp: number, commitment: 
             return txHash;
         } catch (error: any) {
             if (error.message.includes('Commitment must be posted in advance')) {
-                console.error(red(red('\nSequencer-Commitment ::: Timestamp:'), timestamp, ' SequencerRandom ::: Error :: Transaction failed PRECOMMIT_DELAY, not retrying.\n'));
+                console.error(red('\nSequencer-Commitment ::: Timestamp:'), timestamp, red(' SequencerRandom ::: Error :: Transaction failed PRECOMMIT_DELAY, not retrying.\n'));
                 break;
             } else {
                 console.log(red('\nSequencer-Commitment::: Timestamp:'), timestamp, red(' SequencerRandom ::: Transaction failed (attempt '), attempt, "), retrying...\n");
-                if (attempt === retries) throw error;
+                if (attempt === retries) return null
+                    // throw error;
             }
         }
     }
@@ -210,48 +212,55 @@ async function revealSequencerTransactionWithRetry(timestamp: bigint, sequencerR
                 functionName: "revealValue",
                 args: [timestamp, `0x${sequencerRandom.substring(2)}`]
             });
-            console.log(green('\Reveal-Sequencer ::: Transaction sent (attempt '), attempt, "\n");
+            console.log(green.bold.bgBlack('\nReveal-Value ::: Timestamp:'), timestamp, green.bold.bgBlack(' Transaction sent (attempt '), attempt, ")\n");
             return txHash;
         } catch (error: any) {
             switch (true) {
                 case error.message.includes('Revealed value cannot be backfilled after SEQUENCER_TIMEOUT'):
-                    console.log(green('Reveal-Sequencer:::Error\nTransaction failed due to SEQUENCER_TIMEOUT condition, not retrying.'))
+                    console.log(green.bold.bgBlack('\nReveal-Value ::: Timestamp:'), timestamp, green.bold.bgBlack('Reveal-Sequencer:::Error\nTransaction failed SEQUENCER_TIMEOUT condition, not retrying.'))
                     break;
                 case error.message.includes('Revealed value does not match commitment'):
-                    console.log(green('Reveal-Sequencer:::Error\nTransaction failed due to invalid reveal conditions, not retrying.'))
+                    console.log(green.bold.bgBlack('\nReveal-Value ::: Timestamp:'), timestamp, green.bold.bgBlack('Reveal-Sequencer:::Error\nTransaction failed invalid reveal conditions, not retrying.'))
                     break;
                 case error.message.includes('Value already revealed'):
-                    console.log(green('Reveal-Sequencer:::Error\nTransaction failed due to value already revealed, not retrying.'))
+                    console.log(green.bold.bgBlack('\nReveal-Value ::: Timestamp:'), timestamp, green.bold.bgBlack('Reveal-Sequencer:::Error\nTransaction failed ALREADY_REVEALED, not retrying.'))
                     break;
                 default:
-                    console.error(green(`Reveal-Sequencer:::Error\nTransaction attempt ${attempt} failed, retrying...`));
+                    console.log(green.bold.bgBlack('\nReveal-Value::: Timestamp:'), timestamp, red(' Transaction failed (attempt '), attempt, "), retrying...\n");
                     break;
             }
-                if (attempt === retries) throw error;
+                if (attempt === retries) return null;
+                    //  throw error;
         }
     }
 }
 
 // Function to reveal sequencer random values
 async function revealSequencerRandom() {
+    let temp;
     try {
         const block = await publicClient.getBlock({ blockTag: 'latest' });
         const currentBlockTimestamp = block.timestamp + BigInt(2);
+        temp = currentBlockTimestamp;
 
         if (commitments.has(currentBlockTimestamp)) {
             const { sequencerRandomStr } = commitments.get(currentBlockTimestamp)!;
-
-            console.log(green('Reveal-Sequencer:::\nRevealing sequencer random:'), sequencerRandomStr, green('for timestamp:'), currentBlockTimestamp);
+            console.log(green.bold.bgBlack('\nTimestamp:'), currentBlockTimestamp, green.bold.bgBlack(" Revealing value: "), sequencerRandomStr, "\n");
 
             const txHash = await revealSequencerTransactionWithRetry(currentBlockTimestamp, sequencerRandomStr);
-
-            console.log(green(`Reveal-Sequencer:::\nRevealed sequencer random value, transaction hash: ${txHash}`));
+            if (txHash) {
+                console.log(green.bold.bgBlack('\nTimestamp: '), currentBlockTimestamp, green.bold.bgBlack("reveal SUCCESS\n"));
+            }
         }
     } catch (error) {
-        console.error(green('Reveal-Sequencer:::\nError revealing sequencer random value:'), error);
+        console.error(green.bold.bgBlack('\nTimestamp:' ), temp, green.bold.bgBlack('Reveal-Sequencer ::: Error revealing sequencer random value:'), error, "\n");
     }
 }
 
+
+
+
+//** MAIN FUNCTION */
 async function main() {
     const block = await publicClient.getBlock({ blockTag: 'latest' });
     const currentBlockTimestamp = block.timestamp;
@@ -278,8 +287,8 @@ async function main() {
         // Schedule the task to run every 2 seconds for Sequencer random values
         setInterval(generateAndCommitSequencerRandom, 2000);
     
-        // Schedule the task to run every 0.5 seconds to reveal Sequencer random values
-        setInterval(revealSequencerRandom, 500);
+        // Schedule the task to run every 1 second to reveal Sequencer random values
+        setInterval(revealSequencerRandom, 1000);
     });    
 }
 
