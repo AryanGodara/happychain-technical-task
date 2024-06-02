@@ -94,11 +94,11 @@ async function sendDrandOracleTransactionWithRetry(timestamp: number, randomness
                 functionName: "addDrandValue",
                 args: [BigInt(timestamp), `0x${randomness}`]
             });
-            console.log(red(red('\nDrand-API::: Timestamp:'), timestamp, ' DrandOracle ::: Transaction sent (attempt '), attempt, ")\n");
+            console.log(red('\nDrand-API ::: Timestamp:'), timestamp, red(' DrandOracle ::: Transaction sent (attempt '), attempt, ")\n");
             return txHash;
         } catch (error: any) {
             if (error.message.includes('Drand value cannot be backfilled after DRAND_TIMEOUT')) {
-                console.error(red(red('\nDrand-API::: Timestamp:'), timestamp, ' DrandOracle ::: Error :: Transaction failed : DRAND_TIMEOUT , not retrying.\n'));
+                console.error(red(red('\nDrand-API ::: Timestamp:'), timestamp, ' DrandOracle ::: Error :: Transaction failed : DRAND_TIMEOUT , not retrying.\n'));
                 break;
             } else {
                 console.log(red('\nDrand-API::: Timestamp:'), timestamp, red(' DrandOracle ::: Transaction failed (attempt '), attempt, "), retrying...\n");
@@ -123,7 +123,7 @@ async function fetchAndPushRandomness() {
 
         const txHash = await sendDrandOracleTransactionWithRetry(timestamp, randomness);
         if (txHash) {
-            console.log(red.bold.underline('\nTimestamp: '), timestamp, red.bold.underline("SUCCESS\n"));
+            console.log(red.bold.underline('\nTimestamp: '), timestamp, red.bold.underline("drand SUCCESS\n"));
         }
         await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for 2 seconds before checking if it got merged
         
@@ -150,14 +150,14 @@ async function sendSequencerTransactionWithRetry(timestamp: number, commitment: 
                 functionName: "postCommitment",
                 args: [BigInt(timestamp), `0x${commitment}`]
             });
-            console.log(yellow('\SequencerRandom ::: Transaction sent (attempt '), attempt, "\n");
+            console.log(yellow('\nSequencer-Commitment ::: Timestamp:'), timestamp, yellow(' SequencerRandom ::: Transaction sent (attempt '), attempt, ")\n");
             return txHash;
         } catch (error: any) {
             if (error.message.includes('Commitment must be posted in advance')) {
-                console.error(yellow('Sequencer-Commitment:::Error\nTransaction failed due to commitment timing condition, not retrying.'));
+                console.error(red(red('\nSequencer-Commitment ::: Timestamp:'), timestamp, ' SequencerRandom ::: Error :: Transaction failed PRECOMMIT_DELAY, not retrying.\n'));
                 break;
             } else {
-                console.error(yellow(`Sequencer-Commitment:::Retry-Txn\nTransaction attempt ${attempt} failed, retrying...`));
+                console.log(red('\nSequencer-Commitment::: Timestamp:'), timestamp, red(' SequencerRandom ::: Transaction failed (attempt '), attempt, "), retrying...\n");
                 if (attempt === retries) throw error;
             }
         }
@@ -176,12 +176,14 @@ async function generateAndCommitSequencerRandom() {
         
         // Create a Keccak hash of the random value
         const commitment = keccak256(sequencerRandomBuffer);
-
-        console.log(yellow('Sequencer-Commitment:::\nGenerated sequencerRandom string:'), sequencerRandomStr, yellow('with commitment:'), commitment, yellow('for timestamp:'), timestamp);
+        console.log(yellow('\nTimestamp:'), timestamp, yellow(' Sequencer-random: '), sequencerRandomStr, yellow(' Hash: '), commitment, "\n");
 
         commitments.set(BigInt(timestamp), { commitment, sequencerRandomStr });
 
         const txHash = await sendSequencerTransactionWithRetry(timestamp, commitment.substring(2));
+        if (txHash) {
+            console.log(yellow.bold.underline('\nTimestamp: '), timestamp, yellow.bold.underline("commitment SUCCESS\n"));
+        }
 
         await new Promise(resolve => setTimeout(resolve, 2000));
 
@@ -192,9 +194,9 @@ async function generateAndCommitSequencerRandom() {
             args: [BigInt(timestamp)]
         });
 
-        console.log(yellow('Sequencer-Commitment:::\nRead Sequencer random value:'), res, yellow('at timestamp:'), timestamp);
+        console.log(yellow('\nTimestamp'), timestamp, yellow.bold(' Sequencer-Oracle-unsafeGet-Commitment:::'), res, "\n");
     } catch (error) {
-        console.error(yellow('Sequencer-Commitment:::Error\nError generating or committing sequencer random value:'), error);
+        console.error(yellow.bgYellowBright("\nSequencer-Commitment-error: "), error, "\n");
     }
 }
 
@@ -265,7 +267,7 @@ async function main() {
         currentTimeSequencerCommit = Number(currentBlockTimestamp) + 5;
     }
 
-    // Reveal value doesn't need time as input, it just checks current block timestamp, and tries to reveal the value of the next block
+    // Reveal Commitment doesn't need time as input, it just checks current block timestamp, and tries to reveal the value of the next block
 
     app.listen(port, () => {
         console.log(`[server]: Server is running at http://localhost:${port}`);
