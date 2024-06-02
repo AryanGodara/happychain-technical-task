@@ -10,6 +10,9 @@ import { createPublicClient, createWalletClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { anvil } from 'viem/chains';
 
+import { keccak256 } from '@ethersproject/keccak256';
+import { randomBytes } from '@ethersproject/random';
+
 //** Contracts Configuration */
 import {drandOracleAbi, drandOracleAddress} from "./contracts/DrandOracle";
 import {sequencerRandomOracleAbi, sequencerRandomOracleAddress} from "./contracts/SequencerRandomOracle";
@@ -57,9 +60,12 @@ const fastestNodeClient = new FastestNodeClient(urls, options);
 
 
 // Genesis block time (UNIX timestamp in seconds)
-const GENESIS_TIME = 1717251820; // And "even" number for the genesis time for the anvil chain; 20s after anvil chain genesis
-// let currentTime = Math.floor( Date.now()/1000 );
-let currentTime = GENESIS_TIME + 10;
+const GENESIS_TIME = 1717251800; // And "even" number for the genesis time for the anvil chain; 20s after anvil chain genesis
+let currentTime = GENESIS_TIME + 20;
+const PRECOMMIT_DELAY = 10;
+
+// Map to store sequencerRandom and commitments
+const commitments: Map<number, { commitment: string, sequencerRandom: string }> = new Map();
 
 // Function to calculate the round number from the current timestamp
 function getRoundNumber(timestamp: number): number {
@@ -142,8 +148,63 @@ async function fetchAndPushRandomness() {
     }
 }
 
+// Function to retry sending a transaction for SequencerRandomOracle
+async function sendSequencerTransactionWithRetry(timestamp: number, commitment: string, retries = 5) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const txHash = await walletclient.writeContract({
+                address: sequencerRandomOracleAddress,
+                abi: sequencerRandomOracleAbi,
+                functionName: "postCommitment",
+                args: [BigInt(timestamp), `0x${commitment}`]
+            });
+            console.log(`Transaction sent, hash: ${txHash} (attempt ${attempt})`);
+            return txHash;
+        } catch (error: any) {
+            if (error.message.includes('Commitment must be posted in advance')) {
+                console.error('Transaction failed due to commitment timing condition, not retrying.');
+                break;
+            } else {
+                console.error(`Transaction attempt ${attempt} failed, retrying...`);
+                if (attempt === retries) throw error;
+            }
+        }
+    }
+}
+
+// Function to generate and commit sequencer random values
+async function generateAndCommitSequencerRandom() {
+    try {
+        const timestamp = currentTime + PRECOMMIT_DELAY; // Future timestamp
+
+        const sequencerRandom = randomBytes(32);
+        const commitment = keccak256(sequencerRandom);
+
+        console.log('Generated sequencer random:', sequencerRandom, 'with commitment:', commitment, 'for timestamp:', timestamp);
+
+        const txHash = await sendSequencerTransactionWithRetry(timestamp, commitment);
+
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        const res = await publicClient.readContract({
+            address: sequencerRandomOracleAddress,
+            abi: sequencerRandomOracleAbi,
+            functionName: "unsafeGetSequencerValue",
+            args: [BigInt(timestamp)]
+        });
+
+        console.log('Read Sequencer random value:', res, 'at timestamp:', timestamp);
+    } catch (error) {
+        console.error('Error generating or committing sequencer random value:', error);
+    }
+}
+
 app.listen(port, () => {
     console.log(`[server]: Server is running at http://localhost:${port}`);
 
+    // Schedule the task to run every 3 seconds for Drand randomness
     setInterval(fetchAndPushRandomness, 3000);
+
+    // Schedule the task to run every 2 seconds for Sequencer random values
+    setInterval(generateAndCommitSequencerRandom, 2000);
 });
