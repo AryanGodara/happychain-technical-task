@@ -7,7 +7,7 @@ FORK_URL = http://localhost:8545
 ANVIL_LOG = anvil.log
 
 # Targets
-.PHONY: anvil start_anvil build_deploy_contracts build_run_server run
+.PHONY: anvil start_anvil build_deploy_contracts build_run_server run clean
 
 anvil:
 	@echo "Starting Anvil chain..."
@@ -25,3 +25,6 @@ build_run_server:
 run: anvil build_deploy_contracts build_run_server
 	@echo "All tasks completed successfully."
 
+clean:
+	@echo "Cleaning up..."
+	@pkill -F anvil.pid || true

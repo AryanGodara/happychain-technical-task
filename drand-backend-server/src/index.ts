@@ -6,7 +6,7 @@ const bodyParser = require('body-parser');
 import dotenv from 'dotenv';
 
 import { readContract, waitForTransactionReceipt as waitForTxReceipt } from 'viem/actions';
-import { createPublicClient, createWalletClient, http, getContract, erc20Abi_bytes32 } from 'viem'
+import { createPublicClient, createWalletClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { anvil } from 'viem/chains';
 
@@ -28,9 +28,6 @@ app.use(bodyParser.json());
 
 //** */ Viem Configuration */
 const publicClient = createPublicClient({
-    // batch: {
-    //     multicall: true, 
-    // },
     chain: anvil,
     transport: http(),
 });
@@ -70,37 +67,76 @@ function getRoundNumber(timestamp: number): number {
     return Math.floor((timestamp - GENESIS_TIME) / 3);
 }
 
+// Function to retry sending a transaction
+async function sendTransactionWithRetry(timestamp: number, randomness: string, retries = 5) {
+    // for ( let i = 0 ; i < 2 ; i++ ) {
+    //     try {
+    //         const txHash = await walletclient.writeContract({
+    //             address: drandOracleAddress,
+    //             abi: drandOracleAbi,
+    //             functionName: "addDrandValue",
+    //             args: [BigInt(timestamp+30), `0x${"abcd"}`]
+    //         });
+    //         console.log(`Transaction sent, hash: ${txHash} (attempt ${i})`);
+    //         return txHash;
+    //     } catch (error: any) {
+    //         if (error.message.includes('Drand value cannot be backfilled after DRAND_TIMEOUT')) {
+    //             console.error('Transaction failed due to DRAND_TIMEOUT condition, not retrying.');
+    //             break;
+    //         } else {
+    //             console.error(`Transaction attempt ${i} failed, retrying...`);
+    //             if (i === retries) throw error;
+    //         }
+    //     }
+    // }
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const txHash = await walletclient.writeContract({
+                address: drandOracleAddress,
+                abi: drandOracleAbi,
+                functionName: "addDrandValue",
+                args: [BigInt(timestamp), `0x${randomness}`]
+            });
+            console.log(`Transaction sent, hash: ${txHash} (attempt ${attempt})`);
+            return txHash;
+        } catch (error: any) {
+            if (error.message.includes('Drand value cannot be backfilled after DRAND_TIMEOUT')) {
+                console.error('Transaction failed due to DRAND_TIMEOUT condition, not retrying.');
+                break;
+            } else {
+                console.error(`Transaction attempt ${attempt} failed, retrying...`);
+                if (attempt === retries) throw error;
+            }
+        }
+    }
+}
+
 async function fetchAndPushRandomness() {
-  try {
-    currentTime += 3
-    const timestamp = currentTime;
-    const roundNumber = getRoundNumber(timestamp);
+    try {
+        currentTime += 3;
+        const timestamp = currentTime;
+        const roundNumber = getRoundNumber(timestamp);
 
-    fastestNodeClient.start();
-    const theLatestBeaconFromTheFastestClient = await fetchBeacon(fastestNodeClient, roundNumber);
-    fastestNodeClient.stop();
+        fastestNodeClient.start();
+        const theLatestBeaconFromTheFastestClient = await fetchBeacon(fastestNodeClient, roundNumber);
+        fastestNodeClient.stop();
 
-    const randomness = theLatestBeaconFromTheFastestClient.randomness;
+        const randomness = theLatestBeaconFromTheFastestClient.randomness;
 
-    console.log('Fetched randomness:', randomness, 'at timestamp:', timestamp);
+        console.log('Fetched randomness:', randomness, 'at timestamp:', timestamp);
 
-    const txHash = await walletclient.writeContract({
-        address: drandOracleAddress,
-        abi: drandOracleAbi,
-        functionName: "addDrandValue",
-        args: [BigInt(timestamp), `0x${randomness}`]
-    })
-    console.log('Transaction sent, hash:', txHash);
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    const res = await publicClient.readContract({
-        address: drandOracleAddress,
-        abi: drandOracleAbi,
-        functionName: "unsafeGetDrandValue",
-        args: [BigInt(timestamp)]
-    })
+        const txHash = await sendTransactionWithRetry(timestamp, randomness);
+        
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        const res = await publicClient.readContract({
+            address: drandOracleAddress,
+            abi: drandOracleAbi,
+            functionName: "unsafeGetDrandValue",
+            args: [BigInt(timestamp)]
+        });
 
-    console.log('Read Drand value:', res, 'at timestamp:', timestamp);
-
+        console.log('Read Drand value:', res, 'at timestamp:', timestamp);
     } catch (error) {
         console.error('Error fetching randomness or sending transaction:', error);
     }
@@ -109,6 +145,5 @@ async function fetchAndPushRandomness() {
 app.listen(port, () => {
     console.log(`[server]: Server is running at http://localhost:${port}`);
 
-    // Schedule the task to run every 3 seconds
     setInterval(fetchAndPushRandomness, 3000);
 });
