@@ -2,7 +2,7 @@ import { createPublicClient, createWalletClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { anvil } from 'viem/chains';
 
-import {randomnessOracleAbi, randomnessOracleAddress} from "./contracts/RandomnessOracle";
+import {sequencerRandomOracleAbi, sequencerRandomOracleAddress} from "./contracts/SequencerRandomOracle";
 
 //************************ */
 
@@ -28,9 +28,9 @@ async function checkRandomness() {
     // currentBlockTimestamp = currentBlockTimestamp - BigInt(10);
 
     const res = await publicClient.readContract({
-        address: randomnessOracleAddress,
-        abi: randomnessOracleAbi,
-        functionName: "computeRandomness",
+        address: sequencerRandomOracleAddress,
+        abi: sequencerRandomOracleAbi,
+        functionName: "unsafeGetSequencerValue",
         args: [currentBlockTimestamp]
     })
 

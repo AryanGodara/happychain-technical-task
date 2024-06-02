@@ -181,6 +181,10 @@ async function generateAndCommitSequencerRandom() {
         console.log(yellow('\nTimestamp:'), timestamp, yellow(' Sequencer-random: '), sequencerRandomStr, yellow(' Hash: '), commitment, "\n");
 
         commitments.set(BigInt(timestamp), { commitment, sequencerRandomStr });
+        if (commitments.has(BigInt(timestamp)) ) {
+            const { sequencerRandomStr } = commitments.get(BigInt(timestamp))!;
+            console.log(green.bgBlack.bold(sequencerRandomStr))
+        }
 
         const txHash = await sendSequencerTransactionWithRetry(timestamp, commitment.substring(2));
         if (txHash) {
@@ -239,11 +243,13 @@ async function revealSequencerTransactionWithRetry(timestamp: bigint, sequencerR
 async function revealSequencerRandom() {
     let temp;
     try {
+        console.log(green.bgBlack.bold("\nREACHED FUNCTION\n"));
         const block = await publicClient.getBlock({ blockTag: 'latest' });
         const currentBlockTimestamp = block.timestamp + BigInt(2);
         temp = currentBlockTimestamp;
-
+        console.log(green.bgBlack.bold("\nREACHED FUNCTION: timestamp =", currentBlockTimestamp, "\n"));
         if (commitments.has(currentBlockTimestamp)) {
+            console.log(green.bgBlack.bold("\nREACHED FUNCTION: VALUE FOUND IN MAP\n"));
             const { sequencerRandomStr } = commitments.get(currentBlockTimestamp)!;
             console.log(green.bold.bgBlack('\nTimestamp:'), currentBlockTimestamp, green.bold.bgBlack(" Revealing value: "), sequencerRandomStr, "\n");
 
