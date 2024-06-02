@@ -3,7 +3,12 @@ import { fetchBeacon, FastestNodeClient } from 'drand-client';
 import express, { Express, Request, Response } from "express";
 import dotenv from 'dotenv';
 
-import { readContract, waitForTransactionReceipt as waitForTxReceipt } from 'viem/actions';
+import chalk from 'chalk';
+const red = chalk.red;
+const yellow = chalk.yellow;
+const green = chalk.green;
+
+// import { readContract, waitForTransactionReceipt as waitForTxReceipt } from 'viem/actions';
 import { createPublicClient, createWalletClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { anvil } from 'viem/chains';
@@ -61,7 +66,9 @@ const fastestNodeClient = new FastestNodeClient(urls, options);
 
 // Genesis block time (UNIX timestamp in seconds)
 const GENESIS_TIME = 1717251800; // And "even" number for the genesis time for the anvil chain; 20s after anvil chain genesis
-let currentTime = GENESIS_TIME + 20;
+// let currentTime = GENESIS_TIME + 20;
+let currentTimeDrand = GENESIS_TIME;
+let currentTimeSequencerCommit = GENESIS_TIME;
 const PRECOMMIT_DELAY = 10;
 //************************ */
 
@@ -78,27 +85,7 @@ function getRoundNumber(timestamp: number): number {
 }
 
 // Function to retry sending a transaction
-async function sendTransactionWithRetry(timestamp: number, randomness: string, retries = 5) {
-    // for ( let i = 0 ; i < 2 ; i++ ) {
-    //     try {
-    //         const txHash = await walletclient.writeContract({
-    //             address: drandOracleAddress,
-    //             abi: drandOracleAbi,
-    //             functionName: "addDrandValue",
-    //             args: [BigInt(timestamp+30), `0x${"abcd"}`]
-    //         });
-    //         console.log(`Transaction sent, hash: ${txHash} (attempt ${i})`);
-    //         return txHash;
-    //     } catch (error: any) {
-    //         if (error.message.includes('Drand value cannot be backfilled after DRAND_TIMEOUT')) {
-    //             console.error('Transaction failed due to DRAND_TIMEOUT condition, not retrying.');
-    //             break;
-    //         } else {
-    //             console.error(`Transaction attempt ${i} failed, retrying...`);
-    //             if (i === retries) throw error;
-    //         }
-    //     }
-    // }
+async function sendDrandOracleTransactionWithRetry(timestamp: number, randomness: string, retries = 5) {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             const txHash = await walletclient.writeContract({
@@ -107,14 +94,14 @@ async function sendTransactionWithRetry(timestamp: number, randomness: string, r
                 functionName: "addDrandValue",
                 args: [BigInt(timestamp), `0x${randomness}`]
             });
-            console.log(`Transaction sent, hash: ${txHash} (attempt ${attempt})`);
+            console.log(red(red('\nDrand-API::: Timestamp:'), timestamp, ' DrandOracle ::: Transaction sent (attempt '), attempt, ")\n");
             return txHash;
         } catch (error: any) {
             if (error.message.includes('Drand value cannot be backfilled after DRAND_TIMEOUT')) {
-                console.error('Transaction failed due to DRAND_TIMEOUT condition, not retrying.');
+                console.error(red(red('\nDrand-API::: Timestamp:'), timestamp, ' DrandOracle ::: Error :: Transaction failed : DRAND_TIMEOUT , not retrying.\n'));
                 break;
             } else {
-                console.error(`Transaction attempt ${attempt} failed, retrying...`);
+                console.log(red('\nDrand-API::: Timestamp:'), timestamp, red(' DrandOracle ::: Transaction failed (attempt '), attempt, "), retrying...\n");
                 if (attempt === retries) throw error;
             }
         }
@@ -123,8 +110,8 @@ async function sendTransactionWithRetry(timestamp: number, randomness: string, r
 
 async function fetchAndPushRandomness() {
     try {
-        currentTime += 3;
-        const timestamp = currentTime;
+        currentTimeDrand+= 3;
+        const timestamp = currentTimeDrand;
         const roundNumber = getRoundNumber(timestamp);
 
         fastestNodeClient.start();
@@ -132,12 +119,13 @@ async function fetchAndPushRandomness() {
         fastestNodeClient.stop();
 
         const randomness = theLatestBeaconFromTheFastestClient.randomness;
+        console.log(red('\nDrand-API::: Timestamp:'), timestamp, red('Randomness: ', randomness, "\n"));
 
-        console.log('Fetched randomness:', randomness, 'at timestamp:', timestamp);
-
-        const txHash = await sendTransactionWithRetry(timestamp, randomness);
-        
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        const txHash = await sendDrandOracleTransactionWithRetry(timestamp, randomness);
+        if (txHash) {
+            console.log(red.bold.underline('\nTimestamp: '), timestamp, red.bold.underline("SUCCESS\n"));
+        }
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for 2 seconds before checking if it got merged
         
         const res = await publicClient.readContract({
             address: drandOracleAddress,
@@ -146,9 +134,9 @@ async function fetchAndPushRandomness() {
             args: [BigInt(timestamp)]
         });
 
-        console.log('Read Drand value:', res, 'at timestamp:', timestamp);
+        console.log(red('\nTimestamp'), timestamp, red.bold(' Drand-Oracle-unsafeGet:::'), res, "\n");
     } catch (error) {
-        console.error('Error fetching randomness or sending transaction:', error);
+        console.error(red.bgRedBright("\nFetch-Drand-error: "), error, "\n");
     }
 }
 
@@ -162,14 +150,14 @@ async function sendSequencerTransactionWithRetry(timestamp: number, commitment: 
                 functionName: "postCommitment",
                 args: [BigInt(timestamp), `0x${commitment}`]
             });
-            console.log(`Transaction sent, hash: ${txHash} (attempt ${attempt})`);
+            console.log(yellow('\SequencerRandom ::: Transaction sent (attempt '), attempt, "\n");
             return txHash;
         } catch (error: any) {
             if (error.message.includes('Commitment must be posted in advance')) {
-                console.error('Transaction failed due to commitment timing condition, not retrying.');
+                console.error(yellow('Sequencer-Commitment:::Error\nTransaction failed due to commitment timing condition, not retrying.'));
                 break;
             } else {
-                console.error(`Transaction attempt ${attempt} failed, retrying...`);
+                console.error(yellow(`Sequencer-Commitment:::Retry-Txn\nTransaction attempt ${attempt} failed, retrying...`));
                 if (attempt === retries) throw error;
             }
         }
@@ -179,7 +167,8 @@ async function sendSequencerTransactionWithRetry(timestamp: number, commitment: 
 // Function to generate and commit sequencer random values
 async function generateAndCommitSequencerRandom() {
     try {
-        const timestamp = currentTime + PRECOMMIT_DELAY; // Future timestamp
+        currentTimeSequencerCommit += 2;
+        const timestamp = currentTimeSequencerCommit + PRECOMMIT_DELAY; // Only aim for the future timestamps, else it keeps failing
 
         // Generate a random hex string of length 32 bytes
         const sequencerRandomBuffer = randomBytes(32);
@@ -188,7 +177,7 @@ async function generateAndCommitSequencerRandom() {
         // Create a Keccak hash of the random value
         const commitment = keccak256(sequencerRandomBuffer);
 
-        console.log('Generated sequencerRandom string:', sequencerRandomStr, 'with commitment:', commitment, 'for timestamp:', timestamp);
+        console.log(yellow('Sequencer-Commitment:::\nGenerated sequencerRandom string:'), sequencerRandomStr, yellow('with commitment:'), commitment, yellow('for timestamp:'), timestamp);
 
         commitments.set(BigInt(timestamp), { commitment, sequencerRandomStr });
 
@@ -203,9 +192,9 @@ async function generateAndCommitSequencerRandom() {
             args: [BigInt(timestamp)]
         });
 
-        console.log('Read Sequencer random value:', res, 'at timestamp:', timestamp);
+        console.log(yellow('Sequencer-Commitment:::\nRead Sequencer random value:'), res, yellow('at timestamp:'), timestamp);
     } catch (error) {
-        console.error('Error generating or committing sequencer random value:', error);
+        console.error(yellow('Sequencer-Commitment:::Error\nError generating or committing sequencer random value:'), error);
     }
 }
 
@@ -219,18 +208,24 @@ async function revealSequencerTransactionWithRetry(timestamp: bigint, sequencerR
                 functionName: "revealValue",
                 args: [timestamp, `0x${sequencerRandom.substring(2)}`]
             });
-            console.log(`Transaction sent, hash: ${txHash} (attempt ${attempt})`);
+            console.log(green('\Reveal-Sequencer ::: Transaction sent (attempt '), attempt, "\n");
             return txHash;
         } catch (error: any) {
-            if (error.message.includes('Revealed value cannot be backfilled after SEQUENCER_TIMEOUT') ||
-                error.message.includes('Revealed value does not match commitment') ||
-                error.message.includes('Value already revealed')) {
-                console.error('Transaction failed due to SEQUENCER_TIMEOUT or invalid reveal conditions, not retrying.');
-                break;
-            } else {
-                console.error(`Transaction attempt ${attempt} failed, retrying...`);
-                if (attempt === retries) throw error;
+            switch (true) {
+                case error.message.includes('Revealed value cannot be backfilled after SEQUENCER_TIMEOUT'):
+                    console.log(green('Reveal-Sequencer:::Error\nTransaction failed due to SEQUENCER_TIMEOUT condition, not retrying.'))
+                    break;
+                case error.message.includes('Revealed value does not match commitment'):
+                    console.log(green('Reveal-Sequencer:::Error\nTransaction failed due to invalid reveal conditions, not retrying.'))
+                    break;
+                case error.message.includes('Value already revealed'):
+                    console.log(green('Reveal-Sequencer:::Error\nTransaction failed due to value already revealed, not retrying.'))
+                    break;
+                default:
+                    console.error(green(`Reveal-Sequencer:::Error\nTransaction attempt ${attempt} failed, retrying...`));
+                    break;
             }
+                if (attempt === retries) throw error;
         }
     }
 }
@@ -244,26 +239,49 @@ async function revealSequencerRandom() {
         if (commitments.has(currentBlockTimestamp)) {
             const { sequencerRandomStr } = commitments.get(currentBlockTimestamp)!;
 
-            console.log('Revealing sequencer random:', sequencerRandomStr, 'for timestamp:', currentBlockTimestamp);
+            console.log(green('Reveal-Sequencer:::\nRevealing sequencer random:'), sequencerRandomStr, green('for timestamp:'), currentBlockTimestamp);
 
             const txHash = await revealSequencerTransactionWithRetry(currentBlockTimestamp, sequencerRandomStr);
 
-            console.log(`Revealed sequencer random value, transaction hash: ${txHash}`);
+            console.log(green(`Reveal-Sequencer:::\nRevealed sequencer random value, transaction hash: ${txHash}`));
         }
     } catch (error) {
-        console.error('Error revealing sequencer random value:', error);
+        console.error(green('Reveal-Sequencer:::\nError revealing sequencer random value:'), error);
     }
 }
 
-app.listen(port, () => {
-    console.log(`[server]: Server is running at http://localhost:${port}`);
+async function main() {
+    const block = await publicClient.getBlock({ blockTag: 'latest' });
+    const currentBlockTimestamp = block.timestamp;
 
-    // Schedule the task to run every 3 seconds for Drand randomness
-    setInterval(fetchAndPushRandomness, 3000);
+    console.log(chalk.blueBright.bold.underline('Starting server when Block Timestamp ='), Number(currentBlockTimestamp));
 
-    // Schedule the task to run every 2 seconds for Sequencer random values
-    setInterval(generateAndCommitSequencerRandom, 2000);
+    // Check if timestamp is odd, if it is append it by 5, else by 4 (So we're always on even blocks): And gives us the buffer time to set everything up
+    if (currentBlockTimestamp % 2n === 0n) {
+        currentTimeDrand = Number(currentBlockTimestamp) + 4;
+        currentTimeSequencerCommit = Number(currentBlockTimestamp) + 4;
+    } else {
+        currentTimeDrand = Number(currentBlockTimestamp) + 5;
+        currentTimeSequencerCommit = Number(currentBlockTimestamp) + 5;
+    }
 
-    // Schedule the task to run every 0.5 seconds to reveal Sequencer random values
-    setInterval(revealSequencerRandom, 500);
-});
+    // Reveal value doesn't need time as input, it just checks current block timestamp, and tries to reveal the value of the next block
+
+    app.listen(port, () => {
+        console.log(`[server]: Server is running at http://localhost:${port}`);
+    
+        // Schedule the task to run every 3 seconds for Drand randomness
+        setInterval(fetchAndPushRandomness, 3000);
+    
+        // Schedule the task to run every 2 seconds for Sequencer random values
+        setInterval(generateAndCommitSequencerRandom, 2000);
+    
+        // Schedule the task to run every 0.5 seconds to reveal Sequencer random values
+        setInterval(revealSequencerRandom, 500);
+    });    
+}
+
+main().catch((error) => {
+    console.error(red.bold.bgRedBright('Server Broke Down'), error);
+  });
+  
